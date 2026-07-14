@@ -235,6 +235,12 @@ tests/             # pytest suite
 scripts/           # icon generation, benchmarks
 ```
 
+## Contact
+
+- Bug reports and feature requests: please open a
+  [GitHub issue](https://github.com/codeciderluke/ultra-fast-zip/issues)
+- Other inquiries: **codecider.luke@gmail.com**
+
 ## License
 
 MIT License — see [LICENSE](LICENSE).
