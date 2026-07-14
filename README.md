@@ -5,6 +5,8 @@ number of small files, fast. It uses its own `.ufz` format — block-based
 **Zstandard** compression with xxHash64 verification — and extracts most
 common archive formats via auto-detection.
 
+![Compress tab](docs/img/tab_compress.png)
+
 ## Features
 
 - **Compress tab** — pick folders and pack them into `.ufz` (block size 1/4/8/16/32 MB,
@@ -39,11 +41,35 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Run the GUI
+## GUI
 
 ```bash
-python app/main.py
+python app/main.py        # or UltraFastZip.bat / UltraFastZip.exe
 ```
+
+A dark-themed desktop app with four tabs. Work runs on background QThread
+workers, so the window stays responsive; the progress bar, current-file line,
+and color log console update live, and every job can be cancelled mid-run.
+All options are saved as you change them and restored on the next launch.
+
+| Tab | What it does |
+|-----|--------------|
+| **Compress** | Pick one or more folders (Ctrl/Shift multi-select, or `;`-separated paths) and pack each into a `.ufz` archive. Block size (1–32 MB), compression level (1–22), and hidden-file/empty-folder options per job. |
+| **Extract** | Select archives of any supported format — the type is detected from file content, not the extension. `.ufz` extracts via the parallel pipeline with a configurable thread count; overwrite protection is on by default, and the output folder can auto-open when done. |
+| **Inspect** | Instant `.ufz` archive summary (version, codec, sizes, ratio, creation time) plus a searchable file list — read from the header without decompressing anything. |
+| **Settings** | Defaults for block size / level / threads, theme, and optional file logging (`logs/ufz_*.log`). |
+
+<details>
+<summary>More screenshots (Extract / Inspect / Settings)</summary>
+
+![Extract tab](docs/img/tab_extract.png)
+![Inspect tab](docs/img/tab_inspect.png)
+![Settings tab](docs/img/tab_settings.png)
+
+</details>
+
+See the [user manual](docs/manual.html)
+([PDF](docs/UltraFastZip_UserManual.pdf)) for a full walkthrough.
 
 ## Run the CLI
 
