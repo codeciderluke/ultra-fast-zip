@@ -23,6 +23,7 @@ Thumbs.db
 *.ufz
 *.fpk
 
-# Legacy Korean-content assets kept locally, excluded from the public repo
+# Local-only notes (Korean), excluded from the public repo
 docs/FastPackStudio_*.pdf
 fpk_gui_development_spec.md
+DEVLOG_ko.md
