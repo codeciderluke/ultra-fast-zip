@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+release/
+*.spec.bak
+
+# Runtime logs (may contain local paths)
+logs/
+app/logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Archives produced during testing
+*.ufz
+*.fpk
+
+# Legacy Korean-content assets kept locally, excluded from the public repo
+docs/FastPackStudio_*.pdf
+fpk_gui_development_spec.md

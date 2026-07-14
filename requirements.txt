@@ -1,0 +1,3 @@
+PySide6>=6.6
+zstandard>=0.22
+xxhash>=3.4

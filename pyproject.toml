@@ -1,0 +1,27 @@
+[project]
+name = "ultra-fast-zip"
+version = "1.0.0"
+description = "Ultra Fast Zip — high-speed .ufz archive tool for massive file trees (GUI + CLI)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Codecider Lab" }]
+dependencies = [
+    "PySide6>=6.6",
+    "zstandard>=0.22",
+    "xxhash>=3.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+# Optional 7z backend; without it, 7z extraction falls back to bsdtar
+formats = [
+    "py7zr>=1.0",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

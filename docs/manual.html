@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ultra Fast Zip — User Manual</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  :root {
+    --bg: #ffffff; --text: #1a1d24; --muted: #5a6172;
+    --accent: #6247d5; --accent2: #0087a8;
+    --card: #f5f6fa; --border: #dfe2ea; --code-bg: #f0f1f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text); background: var(--bg);
+    max-width: 860px; margin: 0 auto; padding: 32px 24px 64px;
+    line-height: 1.6; font-size: 15px;
+  }
+  h1 { font-size: 30px; margin: 8px 0 4px; }
+  h1 + p.subtitle { color: var(--muted); margin-top: 0; font-size: 16px; }
+  h2 {
+    font-size: 21px; margin-top: 44px; padding-bottom: 6px;
+    border-bottom: 2px solid var(--accent); color: var(--accent);
+  }
+  h3 { font-size: 16px; margin-top: 28px; color: var(--accent2); }
+  code, pre {
+    font-family: Consolas, "Cascadia Code", monospace;
+    background: var(--code-bg); border-radius: 4px;
+  }
+  code { padding: 1px 5px; font-size: 13.5px; }
+  pre { padding: 12px 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.5; }
+  pre code { padding: 0; background: none; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; }
+  th { background: var(--card); }
+  img.shot {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px;
+    margin: 10px 0 4px; display: block;
+  }
+  p.caption { color: var(--muted); font-size: 13px; margin-top: 2px; text-align: center; }
+  .tip {
+    background: var(--card); border-left: 4px solid var(--accent2);
+    padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 14px 0;
+  }
+  .toc { background: var(--card); border-radius: 8px; padding: 16px 24px; }
+  .toc ol { margin: 6px 0; padding-left: 20px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 14px; }
+  @media print {
+    body { max-width: none; font-size: 12.5px; padding: 0; }
+    h2 { page-break-after: avoid; }
+    img.shot { page-break-inside: avoid; max-height: 480px; width: auto; max-width: 100%; margin-left: auto; margin-right: auto; }
+    a { color: var(--text); text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Ultra Fast Zip</h1>
+<p class="subtitle">User Manual · v1.0 · High-speed archive tool for massive file trees</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ol>
+  <li><a href="#overview">Overview</a></li>
+  <li><a href="#install">Installation</a></li>
+  <li><a href="#compress">Compress tab</a></li>
+  <li><a href="#extract">Extract tab</a></li>
+  <li><a href="#inspect">Inspect tab</a></li>
+  <li><a href="#settings">Settings tab</a></li>
+  <li><a href="#cli">Command-line tool (ufz)</a></li>
+  <li><a href="#formats">Supported formats</a></li>
+  <li><a href="#format-spec">The .ufz format</a></li>
+  <li><a href="#troubleshooting">Troubleshooting &amp; FAQ</a></li>
+</ol>
+</div>
+
+<h2 id="overview">1. Overview</h2>
+<p>
+Ultra Fast Zip packs and unpacks folders containing very large numbers of small
+files — source trees, asset folders, datasets — much faster than ZIP. It uses
+its own <code>.ufz</code> format: files are grouped into blocks and compressed
+with <strong>Zstandard</strong>, verified by <strong>xxHash64</strong>
+checksums, and extracted through a parallel pipeline that uses every CPU core.
+</p>
+<p>
+It also opens most common archive types: drop a <code>zip</code>,
+<code>7z</code>, <code>rar</code>, <code>tar(.gz/.bz2/.xz/.zst)</code>,
+<code>gz</code>, <code>cab</code>, or <code>iso</code> file on the Extract tab
+and the format is detected automatically from its content.
+</p>
+<div class="tip">
+On a 70,000-file / 1&nbsp;GB source tree, Ultra Fast Zip packs about
+<strong>3× faster</strong> and unpacks about <strong>1.5–2× faster</strong>
+than ZIP, while producing a smaller archive. See
+<code>docs/format_comparison.md</code> for methodology and full results.
+</div>
+
+<h2 id="install">2. Installation</h2>
+
+<h3>Portable distribution (Windows)</h3>
+<ol>
+  <li>Unzip the release package anywhere.</li>
+  <li>Run <code>UltraFastZip\UltraFastZip.exe</code> for the GUI.
+      Keep the folder intact — the exe does not run if copied out alone.</li>
+  <li><code>ufz.exe</code> is the standalone CLI; copy it anywhere,
+      or add it to <code>PATH</code>.</li>
+</ol>
+<p>Requirements: Windows 10/11 64-bit. No installer or runtime needed.</p>
+
+<h3>From source (all platforms)</h3>
+<pre><code>python -m venv .venv
+# Windows: .venv\Scripts\activate     macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python app/main.py        # GUI
+python app/cli.py --help  # CLI</code></pre>
+<p>Requires Python 3.11+. On Windows, <code>setup.bat</code> does the above in one step.</p>
+
+<h2 id="compress">3. Compress tab</h2>
+<img class="shot" src="img/tab_compress.png" alt="Compress tab">
+<p class="caption">Compressing a folder to .ufz, 62% complete.</p>
+<ol>
+  <li><strong>Input Folders</strong> — click <em>Select Folder</em>. Hold
+      Ctrl/Shift in the dialog to pick several folders at once, or type paths
+      separated by <code>;</code>. Each folder becomes its own archive.</li>
+  <li><strong>Output (.ufz)</strong> — filled automatically
+      (<code>&lt;folder&gt;.ufz</code> next to the source). With multiple
+      inputs, this field holds the output <em>folder</em> instead.</li>
+  <li><strong>Compression Options</strong>
+    <table>
+      <tr><th>Option</th><th>Effect</th></tr>
+      <tr><td>Block Size (1–32 MB)</td><td>Larger blocks compress slightly better;
+          smaller blocks parallelize extraction more finely. The 8 MB default
+          suits most data.</td></tr>
+      <tr><td>Compression Level</td><td>1 = fastest, 6 = balanced default,
+          9+ = smaller but slower.</td></tr>
+      <tr><td>Include hidden files / empty folders</td><td>Uncheck to skip them.</td></tr>
+    </table>
+  </li>
+  <li>Click <strong>Start Compression</strong>. The bar shows overall progress,
+      the line beneath it the file currently being read, and the console a
+      running log. <strong>Cancel</strong> stops the job and removes partial
+      output.</li>
+</ol>
+
+<h2 id="extract">4. Extract tab</h2>
+<img class="shot" src="img/tab_extract.png" alt="Extract tab">
+<p class="caption">Extracting an archive with automatic format detection.</p>
+<ol>
+  <li><strong>Archives</strong> — select one or more files. Any supported
+      format works (<a href="#formats">§8</a>); the type is detected from the
+      file's content, not its extension.</li>
+  <li><strong>Output Folder</strong> — defaults to
+      <code>&lt;name&gt;_extracted</code>. With multiple archives, each gets
+      its own subfolder here.</li>
+  <li><strong>Options</strong>
+    <table>
+      <tr><th>Option</th><th>Effect</th></tr>
+      <tr><td>Worker Threads (.ufz only)</td><td>0 = one per CPU core.
+          The pipeline runs this many decompress <em>and</em> write workers.</td></tr>
+      <tr><td>Overwrite existing files</td><td>Off by default — extraction
+          stops with an error rather than replacing files.</td></tr>
+      <tr><td>Open folder when done</td><td>Opens the output in Explorer.</td></tr>
+    </table>
+  </li>
+  <li>Click <strong>Start Extraction</strong>. Every block and file checksum is
+      verified during extraction; corruption aborts the job with an error.</li>
+</ol>
+<div class="tip">
+Archive paths are always confined to the output folder. Malicious archives
+using <code>../</code> tricks (Zip Slip) are rejected before anything is written.
+</div>
+
+<h2 id="inspect">5. Inspect tab</h2>
+<img class="shot" src="img/tab_inspect.png" alt="Inspect tab">
+<p class="caption">Archive summary and searchable file list — read instantly from the header.</p>
+<p>
+Select a <code>.ufz</code> file to see its format version, codec, file/block
+counts, original and compressed sizes, ratio, and creation time, plus the full
+file list with a search filter. Because UFZ stores its metadata at the front of
+the archive, inspection is instant even for very large archives — nothing is
+decompressed.
+</p>
+
+<h2 id="settings">6. Settings tab</h2>
+<img class="shot" src="img/tab_settings.png" alt="Settings tab">
+<p class="caption">Defaults applied to new jobs.</p>
+<p>
+Set the default block size, compression level, and thread count, and optionally
+enable saving the log console to files (<code>logs/ufz_*.log</code>). All
+options — including those on the Compress/Extract tabs — are saved as you
+change them and restored on the next launch.
+</p>
+
+<h2 id="cli">7. Command-line tool (ufz)</h2>
+<p><code>ufz.exe</code> (or <code>python app/cli.py</code>) offers the same
+engine without the GUI:</p>
+<pre><code># Pack a folder (default output: &lt;folder&gt;.ufz)
+ufz pack my_folder
+ufz pack my_folder -o backup.ufz --block-size 16 --level 9 --overwrite
+
+# Extract any supported archive (format auto-detected)
+ufz unpack backup.ufz
+ufz unpack backup.ufz -o restore_dir --threads 8 --overwrite
+ufz unpack photos.zip
+
+# Show archive info / file list
+ufz inspect backup.ufz
+ufz inspect backup.ufz --list</code></pre>
+<table>
+  <tr><th>Command</th><th>Option</th><th>Description</th></tr>
+  <tr><td rowspan="4">pack</td><td><code>--block-size MB</code></td><td>1/4/8/16/32, default 8</td></tr>
+  <tr><td><code>--level 1-22</code></td><td>Zstandard level, default 6</td></tr>
+  <tr><td><code>--no-hidden</code> / <code>--no-empty-dirs</code></td><td>exclude hidden files / empty folders</td></tr>
+  <tr><td><code>--overwrite</code></td><td>replace an existing output file</td></tr>
+  <tr><td rowspan="2">unpack</td><td><code>-t, --threads N</code></td><td>worker threads (.ufz only), 0 = CPU count</td></tr>
+  <tr><td><code>--overwrite</code></td><td>replace existing files</td></tr>
+  <tr><td>inspect</td><td><code>-l, --list</code></td><td>print the file list</td></tr>
+  <tr><td>all</td><td><code>-q, --quiet</code></td><td>suppress progress and logs</td></tr>
+</table>
+<p>Exit codes: <code>0</code> success · <code>1</code> error · <code>130</code> cancelled (Ctrl+C).</p>
+
+<h2 id="formats">8. Supported formats</h2>
+<table>
+  <tr><th>Format</th><th>Pack</th><th>Extract</th><th>Backend</th></tr>
+  <tr><td><code>.ufz</code> (and legacy <code>.fpk</code>)</td><td>✔</td><td>✔ (parallel)</td><td>native pipeline</td></tr>
+  <tr><td>zip</td><td>—</td><td>✔</td><td>built-in (cp949 filename recovery)</td></tr>
+  <tr><td>tar, tar.gz, tar.bz2, tar.xz, tar.zst</td><td>—</td><td>✔</td><td>built-in, streaming</td></tr>
+  <tr><td>gz, bz2, xz, zst (single file)</td><td>—</td><td>✔</td><td>built-in (<code>foo.txt.gz → foo.txt</code>)</td></tr>
+  <tr><td>7z</td><td>—</td><td>✔</td><td>py7zr if installed, else bsdtar</td></tr>
+  <tr><td>rar, cab, iso</td><td>—</td><td>✔</td><td>bsdtar (bundled with Windows 10+/macOS)</td></tr>
+</table>
+<p>
+Detection uses magic bytes, so files with wrong or missing extensions still
+extract correctly. Formats delegated to bsdtar show no percentage progress.
+</p>
+
+<h2 id="format-spec">9. The .ufz format</h2>
+<pre><code>Header
+  MAGIC            8 bytes   UFZ1\0\0\0\1   (legacy FPK1\0\0\0\1 readable)
+  VERSION          uint16    little-endian
+  METADATA_LENGTH  uint64
+Metadata JSON (UTF-8)                       — file table, block map, sizes, mtimes
+Block Header #1   RAW_SIZE u64 | COMPRESSED_SIZE u64 | XXH64 u64
+Compressed Block #1 (zstd)
+Block Header #2 ...</code></pre>
+<ul>
+  <li>Files are packed into fixed-size blocks before compression, so thousands
+      of small files cost one compression context, and blocks decompress
+      independently — the basis of parallel extraction and block-level random
+      access.</li>
+  <li>Two checksum layers: each block (compressed bytes) and each file
+      (original bytes).</li>
+  <li>Version history: v1 zlib+CRC32 · v2 zstd+CRC32 · v3 (current)
+      zstd+xxHash64. All older versions remain extractable.</li>
+</ul>
+
+<h2 id="troubleshooting">10. Troubleshooting &amp; FAQ</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause / fix</th></tr>
+  <tr><td>"File already exists (overwrite disabled)"</td>
+      <td>The output already contains that file. Enable
+          <em>Overwrite existing files</em> (GUI) or pass
+          <code>--overwrite</code> (CLI).</td></tr>
+  <tr><td>"Block checksum mismatch"</td>
+      <td>The archive is damaged (truncated download, disk error). Re-obtain
+          the archive; extraction never writes unverified data.</td></tr>
+  <tr><td>"Unsupported or unrecognized archive format"</td>
+      <td>The file is not an archive Ultra Fast Zip can read — or is encrypted.
+          Encrypted zip/7z/rar archives are not supported.</td></tr>
+  <tr><td>"Extracting RAR requires bsdtar"</td>
+      <td>rar/cab/iso (and 7z without py7zr) use the system's
+          <code>tar.exe</code>. It ships with Windows 10+ and macOS; on Linux,
+          install <code>libarchive-tools</code> (bsdtar).</td></tr>
+  <tr><td>First run on a folder is slow, later runs fast</td>
+      <td>Cold-cache small-file reads are limited by the disk and antivirus,
+          not the tool. Subsequent (warm-cache) runs show the true speed.</td></tr>
+  <tr><td>UltraFastZip.exe does nothing when double-clicked</td>
+      <td>It was copied out of its folder. Copy the whole
+          <code>UltraFastZip</code> folder; only <code>ufz.exe</code> is
+          standalone.</td></tr>
+</table>
+
+<h3>FAQ</h3>
+<p><strong>Can it create zip/7z archives?</strong> No — packing is
+<code>.ufz</code> only. Extraction covers the common formats.</p>
+<p><strong>Does it encrypt archives?</strong> Not yet; use OS or container
+encryption for sensitive data.</p>
+<p><strong>Are my old .fpk archives still usable?</strong> Yes. UFZ is the same
+format renamed; every legacy version (v1–v3, FPK magic) extracts as-is.</p>
+<p><strong>Why is packing single-threaded?</strong> A parallel pack pipeline is
+on the roadmap; extraction already scales with cores, which is where the format
+design pays off most.</p>
+
+<footer>
+Ultra Fast Zip v1.0 · Designed by Codecider Lab · MIT License (see LICENSE) ·
+Third-party notices in NOTICE.md
+</footer>
+
+</body>
+</html>
