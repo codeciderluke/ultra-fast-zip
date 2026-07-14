@@ -67,9 +67,9 @@ Relative to UFZ:
 - **Size within 0.8% (par)**: expected with identical codec/level. UFZ is
   marginally larger due to compression-context breaks at block boundaries plus
   block headers/JSON metadata.
-- **Pack 23% slower**: UFZ's pack path is currently **single-threaded** with
-  Python-level scan/buffer overhead; bsdtar is pure C. → top improvement
-  candidate (§7).
+- **Pack was 23% slower when single-threaded** (this table's measurement);
+  the parallel pack pipeline added afterwards reverses it — see §6, where UFZ
+  packs the same dataset in 0.9s vs tar.zst's 1.6s.
 - **Unpack 1.5x faster**: a single-stream tar.zst cannot be extracted in
   parallel, structurally. UFZ blocks are independent, so extraction spreads
   across all cores. **This is the core value of the format design**, and the gap
@@ -121,50 +121,52 @@ actually run — 7-Zip 26.02 and WinRAR 7.23 at their normal presets — instead
 of library-level baselines. Same protocol: two runs, minimum taken, full CRC32
 restore verification (all PASS).
 
+Measured after the parallel pack pipeline landed (packing now uses N compress
+workers, mirroring extraction; the archive layout is unchanged).
+
 **Mixed dataset (4,412 files / 322 MB):**
 
 | Tool / format | Pack | Unpack | Ratio |
 |---------------|-----:|-------:|------:|
-| UFZ (zstd-6) | 2.1s | **0.7s** | 17.0% |
-| ZIP (7-Zip, deflate -mx5) | **1.5s** | 2.0s | 18.6% |
-| 7z (7-Zip, LZMA2 -mx5) | 28.9s | 1.8s | **14.2%** |
-| RAR (WinRAR, -m3) | 3.2s | 1.7s | 17.0% |
-| tar.zst (bsdtar, zstd-6) | 1.5s | 1.2s | 16.8% |
+| UFZ (zstd-6) | **0.9s** | **0.7s** | 17.0% |
+| ZIP (7-Zip, deflate -mx5) | 1.5s | 2.0s | 18.6% |
+| 7z (7-Zip, LZMA2 -mx5) | 30.2s | 1.8s | **14.2%** |
+| RAR (WinRAR, -m3) | 3.5s | 1.7s | 17.0% |
+| tar.zst (bsdtar, zstd-6) | 1.6s | 1.1s | 16.8% |
 
 **Real-world data (1,000 JPEG photos / 812 MB, incompressible):**
 
 | Tool / format | Pack | Unpack | Ratio |
 |---------------|-----:|-------:|------:|
-| UFZ (zstd-6) | 6.9s | **0.9s** | 78.9% |
-| ZIP (7-Zip) | **3.8s** | 3.3s | 79.3% |
-| 7z (7-Zip) | 21.3s | 2.5s | **76.1%** |
-| RAR (WinRAR) | 7.9s | 2.3s | 77.5% |
-| tar.zst (bsdtar) | 5.4s | 0.8s | 79.0% |
+| UFZ (zstd-6) | **2.0s** | **0.6s** | 78.9% |
+| ZIP (7-Zip) | 3.8s | 3.3s | 79.3% |
+| 7z (7-Zip) | 21.8s | 2.6s | **76.1%** |
+| RAR (WinRAR) | 8.6s | 2.4s | 77.5% |
+| tar.zst (bsdtar) | 5.3s | 0.8s | 79.0% |
 
 Observations:
 
-- **Extraction stays UFZ's win against real tools too**: fastest on both
-  datasets (2.3–3.8× vs ZIP/7z/RAR). Even on incompressible JPEGs — where
-  codecs barely matter — the block-parallel write pipeline moves 812 MB back
-  to disk in under a second.
-- **Multithreaded packers close the pack gap**: 7-Zip's ZIP (all cores) packs
-  faster than UFZ's single-threaded packer, unlike the library-level ZIP
-  baseline in §3. This sharpens the case for the parallel pack pipeline (§7).
-- RAR (normal) lands almost exactly on UFZ's ratio while packing slower and
-  extracting 2.3–2.7× slower.
+- **UFZ leads both directions against real tools.** Parallel packing cut pack
+  time 2.5× (mixed) and 3.4× (JPEG) versus the earlier single-threaded packer,
+  overtaking multithreaded 7-Zip ZIP; block-parallel extraction stays fastest
+  (2.3–5.5× vs ZIP/7z/RAR). Both gaps grow with core count.
+- Single-thread history for the record: pre-parallel UFZ packed the mixed set
+  in 2.1s (vs 7-Zip ZIP 1.5s) and the JPEGs in 6.9s (vs 3.8s) — the pipeline
+  flipped both.
+- RAR (normal) lands almost exactly on UFZ's ratio while packing 4× slower and
+  extracting 2.4–3.9× slower.
 - On JPEGs every format still trims 21–24% — JPEG metadata and internal
   structure retain some redundancy — with 7z's LZMA2 leading as usual at a
-  3–6× pack-time cost.
+  6–11× pack-time cost.
 - **ARJ / LZH were excluded**: both are legacy formats (ARJ last released in
   2004; LZH deprecated with known-vulnerable tooling) with no maintained
   creation tools — 7-Zip and bsdtar extract but cannot create them.
 
 ## 7. Limitations and improvement candidates
 
-1. **Parallel packing (big win)** — packing is single-threaded and loses 23% to
-   (also single-threaded) C tar.zst. Blocks are independent, so a
-   read → N compress workers → write pipeline mirrors extraction;
-   `ZstdCompressor(threads=N)` alone would already help.
+1. ~~**Parallel packing (big win)**~~ — **implemented** (2026-07-14): a
+   read → N compress workers → ordered-write pipeline mirroring extraction.
+   Pack time dropped 2.5–3.4× (§6) with a byte-identical archive layout.
 2. **JSON metadata** — parsing/memory may bottleneck at hundreds of thousands of
    files; a fixed-width binary index is a candidate.
 3. **Temp-file assembly** — blocks are written to `.blocks.tmp` then copied,
@@ -179,7 +181,7 @@ Observations:
   unpacking trees of many small files): 2.7x faster pack, 2.2x faster unpack,
   11% smaller.
 - Against same-codec tar.zst, ratio is par while extraction is 1.5x faster with
-  instant listing — the measured value of block-solid design. The remaining 23%
-  pack-speed gap is addressable via pack parallelization.
+  instant listing — the measured value of block-solid design. The pack-speed
+  gap seen single-threaded was erased by the parallel pack pipeline (§6).
 - When maximum ratio matters, LZMA still wins (18.7% smaller) at a 46x time
   cost; for iterative workflows, UFZ/zstd is the rational choice.

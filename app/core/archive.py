@@ -143,6 +143,13 @@ def make_compressor(level: int) -> zstandard.ZstdCompressor:
     return zstandard.ZstdCompressor(level=level)
 
 
+def write_compressed_block(fp: BinaryIO, raw_size: int, compressed: bytes) -> int:
+    """Write an already-compressed block with its header; return compressed size."""
+    fp.write(BLOCK_HEADER_V3.pack(raw_size, len(compressed), digest(compressed)))
+    fp.write(compressed)
+    return len(compressed)
+
+
 def write_block(
     fp: BinaryIO,
     raw_data: bytes,
@@ -152,10 +159,7 @@ def write_block(
     """Compress a block with Zstandard, write it, return the compressed size."""
     if compressor is None:
         compressor = make_compressor(level)
-    compressed = compressor.compress(raw_data)
-    fp.write(BLOCK_HEADER_V3.pack(len(raw_data), len(compressed), digest(compressed)))
-    fp.write(compressed)
-    return len(compressed)
+    return write_compressed_block(fp, len(raw_data), compressor.compress(raw_data))
 
 
 def read_block_header(fp: BinaryIO, version: int = FORMAT_VERSION) -> tuple[int, int, int]:

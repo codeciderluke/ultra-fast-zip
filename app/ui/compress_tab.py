@@ -1,6 +1,7 @@
 """Compress tab — select folders and pack into .ufz archives."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -78,6 +80,15 @@ class CompressTab(QWidget):
         self.level_combo.setCurrentIndex(idx if idx >= 0 else 1)
         opt_row.addWidget(self.level_combo)
 
+        opt_row.addWidget(self._field_label("Worker Threads"))
+        self.threads_spin = QSpinBox()
+        self.threads_spin.setRange(0, max(64, (os.cpu_count() or 1) * 2))
+        self.threads_spin.setSpecialValueText(f"Auto ({os.cpu_count() or 1} CPU cores)")
+        self.threads_spin.setValue(
+            settings_tab.load_int("compress/threads", settings_tab.default_threads())
+        )
+        opt_row.addWidget(self.threads_spin)
+
         self.hidden_check = QCheckBox("Include hidden files")
         self.hidden_check.setChecked(settings_tab.load_bool("compress/include_hidden", True))
         opt_row.addWidget(self.hidden_check)
@@ -90,6 +101,7 @@ class CompressTab(QWidget):
 
         self.block_combo.currentIndexChanged.connect(self._save_prefs)
         self.level_combo.currentIndexChanged.connect(self._save_prefs)
+        self.threads_spin.valueChanged.connect(self._save_prefs)
         self.hidden_check.toggled.connect(self._save_prefs)
         self.empty_dirs_check.toggled.connect(self._save_prefs)
 
@@ -130,6 +142,7 @@ class CompressTab(QWidget):
     def _save_prefs(self) -> None:
         settings_tab.save_value("compress/block_size_mb", self.block_combo.currentData())
         settings_tab.save_value("compress/level", self.level_combo.currentData())
+        settings_tab.save_value("compress/threads", self.threads_spin.value())
         settings_tab.save_value("compress/include_hidden", self.hidden_check.isChecked())
         settings_tab.save_value("compress/include_empty_dirs", self.empty_dirs_check.isChecked())
 
@@ -218,6 +231,7 @@ class CompressTab(QWidget):
             level=int(self.level_combo.currentData()),
             include_hidden=self.hidden_check.isChecked(),
             include_empty_dirs=self.empty_dirs_check.isChecked(),
+            threads=self.threads_spin.value(),
         )
 
         self._worker = PackWorker(jobs, options)

@@ -54,7 +54,7 @@ All options are saved as you change them and restored on the next launch.
 
 | Tab | What it does |
 |-----|--------------|
-| **Compress** | Pick one or more folders (Ctrl/Shift multi-select, or `;`-separated paths) and pack each into a `.ufz` archive. Block size (1–32 MB), compression level (1–22), and hidden-file/empty-folder options per job. |
+| **Compress** | Pick one or more folders (Ctrl/Shift multi-select, or `;`-separated paths) and pack each into a `.ufz` archive. Block size (1–32 MB), compression level (1–22), worker threads (0 = CPU count), and hidden-file/empty-folder options per job. |
 | **Extract** | Select archives of any supported format — the type is detected from file content, not the extension. `.ufz` extracts via the parallel pipeline with a configurable thread count; overwrite protection is on by default, and the output folder can auto-open when done. |
 | **Inspect** | Instant `.ufz` archive summary (version, codec, sizes, ratio, creation time) plus a searchable file list — read from the header without decompressing anything. |
 | **Settings** | Defaults for block size / level / threads, theme, and optional file logging (`logs/ufz_*.log`). |
@@ -96,6 +96,7 @@ Key options:
 |---------|--------|-------------|
 | pack | `--block-size MB` | Block size (1/4/8/16/32, default 8) |
 | pack | `--level 1-22` | Zstandard level (default 6) |
+| pack | `-t, --threads N` | Compress workers (default 0 = CPU count) |
 | pack | `--no-hidden` / `--no-empty-dirs` | Exclude hidden files / empty folders |
 | unpack | `-t, --threads N` | Worker threads (.ufz only, default 0 = CPU count) |
 | unpack | `--overwrite` | Overwrite existing files |
@@ -141,30 +142,31 @@ job ran twice and the minimum was taken.
 
 | Tool / format | Pack | Unpack | Ratio |
 |---------------|-----:|-------:|------:|
-| **UFZ** (zstd-6, this project) | 2.1s | **0.7s** | 17.0% |
-| ZIP (7-Zip, deflate `-mx5`) | **1.5s** | 2.0s | 18.6% |
-| 7z (7-Zip, LZMA2 `-mx5`) | 28.9s | 1.8s | **14.2%** |
-| RAR (WinRAR, `-m3`) | 3.2s | 1.7s | 17.0% |
-| tar.zst (bsdtar, zstd-6) | 1.5s | 1.2s | 16.8% |
+| **UFZ** (zstd-6, this project) | **0.9s** | **0.7s** | 17.0% |
+| ZIP (7-Zip, deflate `-mx5`) | 1.5s | 2.0s | 18.6% |
+| 7z (7-Zip, LZMA2 `-mx5`) | 30.2s | 1.8s | **14.2%** |
+| RAR (WinRAR, `-m3`) | 3.5s | 1.7s | 17.0% |
+| tar.zst (bsdtar, zstd-6) | 1.6s | 1.1s | 16.8% |
 
 **Real-world data — 1,000 JPEG photos / 812 MB** (already-compressed media):
 
 | Tool / format | Pack | Unpack | Ratio |
 |---------------|-----:|-------:|------:|
-| **UFZ** (zstd-6, this project) | 6.9s | **0.9s** | 78.9% |
-| ZIP (7-Zip) | **3.8s** | 3.3s | 79.3% |
-| 7z (7-Zip) | 21.3s | 2.5s | **76.1%** |
-| RAR (WinRAR) | 7.9s | 2.3s | 77.5% |
-| tar.zst (bsdtar) | 5.4s | 0.8s | 79.0% |
+| **UFZ** (zstd-6, this project) | **2.0s** | **0.6s** | 78.9% |
+| ZIP (7-Zip) | 3.8s | 3.3s | 79.3% |
+| 7z (7-Zip) | 21.8s | 2.6s | **76.1%** |
+| RAR (WinRAR) | 8.6s | 2.4s | 77.5% |
+| tar.zst (bsdtar) | 5.3s | 0.8s | 79.0% |
 
 Takeaways:
 
-- **Extraction is where UFZ leads**: fastest of every tool tested on both
-  datasets — 2.3–3.8× faster than ZIP/7z/RAR — thanks to the block-parallel
-  pipeline. The gap grows with core count.
-- Packing is currently single-threaded, so multithreaded ZIP packs faster;
-  a parallel pack pipeline is on the roadmap. UFZ still out-compresses ZIP
-  and matches RAR on ratio at a fraction of 7z's pack time.
+- **UFZ is the fastest tool tested at both packing and extraction on both
+  datasets** — both directions run block-parallel pipelines, so the gaps grow
+  with core count.
+- Extraction: 2.3–5.5× faster than ZIP/7z/RAR. Packing: 1.7–1.9× faster than
+  ZIP, 4.3× than RAR, while out-compressing ZIP.
+- 7z's LZMA2 still wins on ratio (about 3 points smaller) at a 15–33×
+  pack-time cost — the classic trade-off.
 - ARJ and LZH were not measured: both are legacy formats with no maintained
   creation tools (7-Zip and bsdtar can only extract them).
 
@@ -193,10 +195,13 @@ pyinstaller --onefile --console --name ufz --paths . app/cli.py
 
 Add `--icon assets/icon.ico` for the Windows icon.
 
-## Extraction pipeline architecture
+## Pipeline architecture
 
-`.ufz` extraction is a producer/consumer pipeline where reading,
-decompression, and writing all overlap:
+Both directions run producer/consumer pipelines over independent blocks.
+Packing mirrors extraction: the main thread reads files in path order and
+assembles blocks, N workers compress them concurrently, and a writer stores
+results in block order — so the archive layout is identical regardless of
+worker count. Extraction:
 
 ```text
 Archive (mmap, zero-copy reads)

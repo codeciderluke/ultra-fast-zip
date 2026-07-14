@@ -76,6 +76,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
         level=args.level,
         include_hidden=not args.no_hidden,
         include_empty_dirs=not args.no_empty_dirs,
+        threads=args.threads,
     )
     progress_cb, log_cb, status_cb = _quiet_callbacks(args.quiet)
     result = pack(src, out, options, progress_cb=progress_cb, log_cb=log_cb, status_cb=status_cb)
@@ -137,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pack.add_argument(
         "--level", type=int, default=6, choices=range(1, 23),
         metavar="1-22", help="Zstandard level (default: 6)",
+    )
+    p_pack.add_argument(
+        "-t", "--threads", type=int, default=0,
+        help="compress worker threads (default: 0 = CPU count)",
     )
     p_pack.add_argument("--no-hidden", action="store_true", help="exclude hidden files")
     p_pack.add_argument("--no-empty-dirs", action="store_true", help="exclude empty folders")

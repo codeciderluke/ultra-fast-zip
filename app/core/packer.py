@@ -1,7 +1,20 @@
-"""Scan a folder, group files into blocks, compress into a .ufz archive."""
+"""Scan a folder, group files into blocks, compress into a .ufz archive.
+
+Packing mirrors the extraction pipeline: the main thread reads files and
+assembles raw blocks in path order, N workers compress blocks concurrently,
+and a writer thread stores results in block order, so the archive layout is
+identical to a single-threaded pack::
+
+    Reader (main thread, sequential disk reads + per-file xxHash64)
+        v   (backpressure via in-flight block budget)
+    Compress Workers x N (Zstandard, GIL released)
+        v
+    Writer (reorders by block index, sequential writes)
+"""
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 from dataclasses import dataclass
@@ -14,7 +27,7 @@ from app.core.archive import (
     OperationCancelled,
     make_compressor,
     new_hasher,
-    write_block,
+    write_compressed_block,
     write_header,
 )
 from app.core.models import FileEntry
@@ -29,6 +42,9 @@ _STATUS_INTERVAL = 0.05
 
 _READ_CHUNK = 4 * 1024 * 1024
 
+# Raw block bytes allowed in the pipeline at once (backpressure)
+_INFLIGHT_MEMORY_BUDGET = 256 * 1024 * 1024
+
 DEFAULT_BLOCK_SIZE = 8 * 1024 * 1024
 DEFAULT_LEVEL = 6
 
@@ -39,6 +55,7 @@ class PackOptions:
     level: int = DEFAULT_LEVEL
     include_hidden: bool = True
     include_empty_dirs: bool = True
+    threads: int = 0  # compress workers; 0 = auto (CPU count)
 
 
 @dataclass
@@ -48,6 +65,12 @@ class PackResult:
     total_size: int
     compressed_size: int
     elapsed: float
+
+
+def _resolve_threads(threads: int) -> int:
+    if threads and threads > 0:
+        return threads
+    return max(1, os.cpu_count() or 1)
 
 
 def scan_folder(
@@ -116,7 +139,9 @@ def pack(
     log("info", f"Scanning folder: {src_dir}")
     files, empty_dirs = scan_folder(src_dir, options)
     total_bytes = sum(size for _, _, size, _, _ in files)
-    log("info", f"Found {len(files):,} files, {total_bytes:,} bytes total")
+    thread_count = _resolve_threads(options.threads)
+    log("info", f"Found {len(files):,} files, {total_bytes:,} bytes total "
+                f"({thread_count} compress workers)")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_blocks = out_path.with_name(out_path.name + ".blocks.tmp")
@@ -136,74 +161,166 @@ def pack(
                 last_pct = pct
                 report(min(pct, 90))
 
-    compressor = make_compressor(options.level)
+    # ------------------------------------------------------------- pipeline
+    errors: list[BaseException] = []
+    error_lock = threading.Lock()
 
-    def flush_block(fp, buffer: bytearray) -> None:
-        nonlocal block_index, compressed_total
-        if not buffer:
-            return
-        compressed_total += write_block(fp, bytes(buffer), options.level, compressor)
-        block_index += 1
-        buffer.clear()
+    def fail(exc: BaseException) -> None:
+        with error_lock:
+            errors.append(exc)
+        cancel.set()
 
+    # Cap raw blocks held by the pipeline (queued + compressing + pending write)
+    max_inflight = max(2, min(thread_count * 2,
+                              _INFLIGHT_MEMORY_BUDGET // max(1, options.block_size)))
+    inflight = threading.Semaphore(max_inflight)
+    compress_queue: queue.Queue = queue.Queue()
+    write_queue: queue.Queue = queue.Queue()
+
+    def acquire_inflight() -> bool:
+        while not cancel.is_set():
+            if inflight.acquire(timeout=0.2):
+                return True
+        return False
+
+    def compress_worker() -> None:
+        compressor = make_compressor(options.level)
+        while True:
+            item = compress_queue.get()
+            if item is None:
+                return
+            index, raw = item
+            try:
+                if cancel.is_set():
+                    inflight.release()
+                    continue
+                write_queue.put((index, len(raw), compressor.compress(raw)))
+            except BaseException as exc:  # noqa: BLE001 — abort the whole pipeline
+                inflight.release()
+                fail(exc)
+
+    def writer_worker(bfp) -> None:
+        # Workers finish out of order; buffer results until the next index arrives
+        nonlocal compressed_total
+        pending: dict[int, tuple[int, bytes]] = {}
+        next_index = 0
+        while True:
+            item = write_queue.get()
+            if item is None:
+                return
+            index, raw_size, compressed = item
+            try:
+                if cancel.is_set():
+                    inflight.release()
+                    continue
+                pending[index] = (raw_size, compressed)
+                while next_index in pending:
+                    size, data = pending.pop(next_index)
+                    compressed_total += write_compressed_block(bfp, size, data)
+                    next_index += 1
+                    inflight.release()
+            except BaseException as exc:  # noqa: BLE001 — abort the whole pipeline
+                inflight.release()
+                fail(exc)
+
+    producer_error: Optional[BaseException] = None
     try:
         with open(tmp_blocks, "wb") as bfp:
-            buffer = bytearray()
-            for full, rel, size, mtime, mode in files:
-                if cancel.is_set():
+            compress_threads = [
+                threading.Thread(target=compress_worker, daemon=True)
+                for _ in range(thread_count)
+            ]
+            writer_thread = threading.Thread(target=writer_worker, args=(bfp,), daemon=True)
+            for thread in compress_threads:
+                thread.start()
+            writer_thread.start()
+
+            def flush_block(buffer: bytearray) -> None:
+                nonlocal block_index
+                if not buffer:
+                    return
+                if not acquire_inflight():
                     raise OperationCancelled("Cancelled by user.")
+                compress_queue.put((block_index, bytes(buffer)))
+                block_index += 1
+                buffer.clear()
 
-                now = time.monotonic()
-                if now - last_status >= _STATUS_INTERVAL:
-                    last_status = now
-                    status(rel)
+            try:
+                buffer = bytearray()
+                for full, rel, size, mtime, mode in files:
+                    if cancel.is_set():
+                        raise OperationCancelled("Cancelled by user.")
 
-                offset = len(buffer)
-                hasher = new_hasher()
-                try:
-                    # Buffered read(n) preallocates n bytes, which is very slow
-                    # for many small files — only ever request the remaining size.
-                    with open(full, "rb") as src:
-                        if size <= _READ_CHUNK:
-                            data = src.read()
-                            hasher.update(data)
-                            buffer.extend(data)
-                            processed_bytes += len(data)
-                            del data
-                        else:
-                            remaining = size
-                            while remaining > 0:
-                                chunk = src.read(min(_READ_CHUNK, remaining))
-                                if not chunk:
-                                    break
-                                remaining -= len(chunk)
-                                hasher.update(chunk)
-                                buffer.extend(chunk)
-                                processed_bytes += len(chunk)
-                                report_bytes()
-                except OSError as exc:
-                    raise OSError(f"Cannot read file: {full} ({exc})") from exc
+                    now = time.monotonic()
+                    if now - last_status >= _STATUS_INTERVAL:
+                        last_status = now
+                        status(rel)
 
-                actual_length = len(buffer) - offset
-                entries.append(
-                    FileEntry(
-                        path=rel,
-                        size=actual_length,
-                        mtime=mtime,
-                        mode=mode,
-                        block=block_index,
-                        offset=offset,
-                        length=actual_length,
-                        checksum=hasher.intdigest(),
+                    offset = len(buffer)
+                    hasher = new_hasher()
+                    try:
+                        # Buffered read(n) preallocates n bytes, which is very slow
+                        # for many small files — only ever request the remaining size.
+                        with open(full, "rb") as src:
+                            if size <= _READ_CHUNK:
+                                data = src.read()
+                                hasher.update(data)
+                                buffer.extend(data)
+                                processed_bytes += len(data)
+                                del data
+                            else:
+                                remaining = size
+                                while remaining > 0:
+                                    chunk = src.read(min(_READ_CHUNK, remaining))
+                                    if not chunk:
+                                        break
+                                    remaining -= len(chunk)
+                                    hasher.update(chunk)
+                                    buffer.extend(chunk)
+                                    processed_bytes += len(chunk)
+                                    report_bytes()
+                    except OSError as exc:
+                        raise OSError(f"Cannot read file: {full} ({exc})") from exc
+
+                    actual_length = len(buffer) - offset
+                    entries.append(
+                        FileEntry(
+                            path=rel,
+                            size=actual_length,
+                            mtime=mtime,
+                            mode=mode,
+                            block=block_index,
+                            offset=offset,
+                            length=actual_length,
+                            checksum=hasher.intdigest(),
+                        )
                     )
-                )
 
-                if len(buffer) >= options.block_size:
-                    flush_block(bfp, buffer)
+                    if len(buffer) >= options.block_size:
+                        flush_block(buffer)
 
-                report_bytes()
+                    report_bytes()
 
-            flush_block(bfp, buffer)
+                flush_block(buffer)
+            except BaseException as exc:  # noqa: BLE001 — recorded and re-raised below
+                cancel.set()
+                producer_error = exc
+
+            # Drain the pipeline (fast when cancelled: workers just release budget)
+            for _ in compress_threads:
+                compress_queue.put(None)
+            for thread in compress_threads:
+                thread.join()
+            write_queue.put(None)
+            writer_thread.join()
+
+        real = [exc for exc in errors if not isinstance(exc, OperationCancelled)]
+        if real:
+            raise real[0]
+        if producer_error is not None:
+            raise producer_error
+        if cancel.is_set():
+            raise OperationCancelled("Cancelled by user.")
 
         metadata = {
             "format": "UFZ",

@@ -90,9 +90,11 @@ It also opens most common archive types: drop a <code>zip</code>,
 and the format is detected automatically from its content.
 </p>
 <div class="tip">
-On a 70,000-file / 1&nbsp;GB source tree, Ultra Fast Zip packs about
-<strong>3× faster</strong> and unpacks about <strong>1.5–2× faster</strong>
-than ZIP, while producing a smaller archive. See
+Benchmarked against 7-Zip and WinRAR at their normal presets, Ultra Fast Zip
+was the <strong>fastest tool at both packing and extraction</strong> on a
+mixed 4,412-file dataset and on 812&nbsp;MB of real JPEG photos — extraction
+up to 5× faster than ZIP — while out-compressing ZIP. Both directions run
+block-parallel pipelines that scale with CPU cores. See
 <code>docs/format_comparison.md</code> for methodology and full results.
 </div>
 
@@ -134,6 +136,8 @@ python app/cli.py --help  # CLI</code></pre>
           suits most data.</td></tr>
       <tr><td>Compression Level</td><td>1 = fastest, 6 = balanced default,
           9+ = smaller but slower.</td></tr>
+      <tr><td>Worker Threads</td><td>Parallel compression workers;
+          0 = one per CPU core. Output is identical regardless of the count.</td></tr>
       <tr><td>Include hidden files / empty folders</td><td>Uncheck to skip them.</td></tr>
     </table>
   </li>
@@ -209,8 +213,9 @@ ufz inspect backup.ufz
 ufz inspect backup.ufz --list</code></pre>
 <table>
   <tr><th>Command</th><th>Option</th><th>Description</th></tr>
-  <tr><td rowspan="4">pack</td><td><code>--block-size MB</code></td><td>1/4/8/16/32, default 8</td></tr>
+  <tr><td rowspan="5">pack</td><td><code>--block-size MB</code></td><td>1/4/8/16/32, default 8</td></tr>
   <tr><td><code>--level 1-22</code></td><td>Zstandard level, default 6</td></tr>
+  <tr><td><code>-t, --threads N</code></td><td>compress workers, 0 = CPU count</td></tr>
   <tr><td><code>--no-hidden</code> / <code>--no-empty-dirs</code></td><td>exclude hidden files / empty folders</td></tr>
   <tr><td><code>--overwrite</code></td><td>replace an existing output file</td></tr>
   <tr><td rowspan="2">unpack</td><td><code>-t, --threads N</code></td><td>worker threads (.ufz only), 0 = CPU count</td></tr>
@@ -288,9 +293,9 @@ Block Header #2 ...</code></pre>
 encryption for sensitive data.</p>
 <p><strong>Are my old .fpk archives still usable?</strong> Yes. UFZ is the same
 format renamed; every legacy version (v1–v3, FPK magic) extracts as-is.</p>
-<p><strong>Why is packing single-threaded?</strong> A parallel pack pipeline is
-on the roadmap; extraction already scales with cores, which is where the format
-design pays off most.</p>
+<p><strong>Does the worker-thread count change the archive?</strong> No.
+Both packing and extraction are block-parallel, and blocks are always written
+in order, so the archive is byte-identical whatever the thread count.</p>
 
 <footer>
 Ultra Fast Zip v1.0 · Designed by Codecider Lab · MIT License (see LICENSE) ·

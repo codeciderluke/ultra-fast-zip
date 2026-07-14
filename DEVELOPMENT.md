@@ -106,6 +106,19 @@ unpack **14.6s** vs 22.5s (1.5x), size **223.5 MB** vs 295.2 MB.
 - PDF (`docs/UltraFastZip_UserManual.pdf`) generated with headless Edge;
   `package.bat` bundles it into releases
 
+### 2.12 Parallel pack pipeline (2026-07-14)
+
+- Packing now mirrors extraction: reader (main thread, sequential I/O +
+  per-file xxHash64) → N compress workers → writer that reorders by block
+  index, with the same 256 MB in-flight budget/backpressure and cancel
+  semantics. Archive layout is byte-identical to a single-threaded pack
+  (covered by a layout-equality test).
+- `PackOptions.threads` (0 = CPU count), CLI `pack -t/--threads`, and a
+  Worker Threads spin box on the Compress tab.
+- Measured vs mainstream tools (bench_major): mixed 322 MB pack 2.1s → 0.85s
+  (2.5×), JPEG 812 MB 6.9s → 2.0s (3.4×) — UFZ now fastest at both pack and
+  unpack on both datasets.
+
 ## 3. Directory layout
 
 ```
@@ -116,7 +129,7 @@ app/
   core/              archive (format), packer, unpacker (pipeline), formats (detection), inspector, models
   workers/           pack/unpack (batch jobs)/inspect QThread workers
   utils/             path_utils (safe_join), format_utils, logger
-tests/               pytest suite (33 tests)
+tests/               pytest suite (35 tests)
 scripts/             make_icon.py, bench_gen_dataset.py, bench_multi.py
 assets/              icon.png / icon.ico
 benchmark.py         UFZ vs ZIP benchmark
@@ -125,9 +138,10 @@ setup.bat / build.bat / package.bat / UltraFastZip.bat / ufz.bat
 
 ## 4. Verification status
 
-- pytest **33/33 passing** — header/block roundtrips, corruption detection, overwrite
+- pytest **35/35 passing** — header/block roundtrips, corruption detection, overwrite
   refusal, hidden-file exclusion, empty file/folder preservation, v1 (zlib) backward
-  compatibility, path traversal rejection, multi-format detection/extraction, Zip Slip
+  compatibility, path traversal rejection, multi-format detection/extraction, Zip Slip,
+  parallel-pack roundtrip and single/multi-thread layout equality
 - Real-data check: 70,208-file roundtrip with full hash comparison
 - EXE check: CLI roundtrip (hash match), GUI launch, icon embedding
 
@@ -135,6 +149,5 @@ setup.bat / build.bat / package.bat / UltraFastZip.bat / ufz.bat
 
 - Cold-cache small-file reads can be disk/AV bound (~100 files/s observed) —
   environmental, not tool-related
-- Candidates: parallel pack pipeline (packer is single-threaded; loses ~23% to
-  native tar.zst), drag & drop, additional codecs (brotli/LZ4), post-pack verify
-  option, recent-jobs list
+- Candidates: drag & drop, additional codecs (brotli/LZ4), post-pack verify
+  option, recent-jobs list, single-pass archive assembly (skip the temp-file copy)

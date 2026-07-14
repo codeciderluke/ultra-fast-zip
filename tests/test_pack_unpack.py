@@ -189,6 +189,35 @@ def test_new_archive_uses_zstd_and_ufz_format(sample_tree: Path, tmp_path: Path)
         assert fp.read(8) == archive.MAGIC
 
 
+def test_parallel_pack_roundtrip(sample_tree: Path, tmp_path: Path):
+    """Multi-worker packing produces a valid archive with intact content."""
+    out_ufz = tmp_path / "out.ufz"
+    result = pack(sample_tree, out_ufz,
+                  PackOptions(block_size=16 * 1024, level=6, threads=8))
+    assert result.block_count > 1  # ensure multiple blocks crossed the pipeline
+
+    dest = tmp_path / "extracted"
+    unpack(out_ufz, dest, UnpackOptions(threads=4))
+    assert _tree_snapshot(dest) == _tree_snapshot(sample_tree)
+
+
+def test_parallel_pack_matches_single_thread_layout(sample_tree: Path, tmp_path: Path):
+    """Blocks are written in order, so worker count never changes the layout."""
+    single = tmp_path / "single.ufz"
+    multi = tmp_path / "multi.ufz"
+    pack(sample_tree, single, PackOptions(block_size=16 * 1024, threads=1))
+    pack(sample_tree, multi, PackOptions(block_size=16 * 1024, threads=8))
+
+    def blocks(path: Path) -> bytes:
+        # Skip header + metadata (contains a creation timestamp); compare block bytes
+        with open(path, "rb") as fp:
+            _, meta_len = archive.read_header(fp)
+            fp.seek(meta_len, 1)
+            return fp.read()
+
+    assert blocks(single) == blocks(multi)
+
+
 def test_exclude_hidden_files(tmp_path: Path):
     src = tmp_path / "src"
     src.mkdir()
